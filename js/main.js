@@ -4,30 +4,35 @@
  */
 
 import * as THREE from 'three';
-import { initScene, getScene, getCamera, getRenderer, getControls, updateLightingPreset, setWireframeMode, toggleGrid, setWallColor } from './scene.js';
+import { initScene, getScene, getCamera, getRenderer, getControls, updateLightingPreset, setWireframeMode, toggleGrid, setWallColor, updateRoomDimensions } from './scene.js';
 import { 
     roomTypes, categoryMap, furnitureItems, matColors, 
     roomPresets, builders, getCurrentRoomType, setCurrentRoomType,
     getCurrentCategory, setCurrentCategory,
     getCurrentMatType, setCurrentMatType,
     getCurrentColor, setCurrentColor,
-    getWallColorsList
+    wallColorOptions, setBuilders
 } from './data.js';
+import * as BuildersModule from './builders.js';
 import { 
     addFurniture, addFurnitureAndSelect, selectItem, deselectAll, 
     deleteSelected, duplicateSelected, applyMaterial, clearAllFurniture,
     getPlacedItems, getSelectedItem, setPlacedItems, updateItemCount,
-    getAllFurnitureData, restoreFurnitureFromData
+    getAllFurnitureData, restoreFurnitureFromData, initControls
 } from './controls.js';
 import { 
-    pushState, canUndo, canRedo, undo, redo, clearHistory, 
-    saveStateToHistory, loadLayoutFromData
+    saveStateToHistory, undo, redo, canUndo, canRedo, clearHistory, 
+    getHistoryInfo, setupUndoRedoShortcuts
 } from './undo-redo.js';
 import { 
     saveProjectToFile, loadProjectFromFile, exportProjectToJSON, 
-    importProjectFromJSON, exportToLocalStorage, loadFromLocalStorage
+    importProjectFromJSON, saveToLocalStorage, loadFromLocalStorage,
+    autoSave, loadAutosave, hasAutosave
 } from './storage.js';
-import { showToast, generateId, formatDistance, debounce } from './utils.js';
+import { showToast, generateId, formatDistance, debounce, getElement } from './utils.js';
+
+// Register builders from builders module
+setBuilders(BuildersModule);
 
 // ============================================================
 // DOM Elements
@@ -51,11 +56,10 @@ const currentMatSpan = document.getElementById('current-mat');
 const selectedName = document.getElementById('sel-name');
 const selectedDesc = document.getElementById('sel-desc');
 const itemPanel = document.getElementById('item-panel');
-const toast = document.getElementById('toast');
-const loadingScreen = document.getElementById('loading-screen');
 const itemCountSpan = document.getElementById('item-count');
 const measureDisplay = document.getElementById('measure-display');
 const measureValue = document.getElementById('measure-value');
+const loadingScreen = document.getElementById('loading-screen');
 
 // Buttons
 const toggleSidebarBtn = document.getElementById('toggle-sidebar');
@@ -108,9 +112,6 @@ let rendererRef = null;
 // UI Rendering Functions
 // ============================================================
 
-/**
- * Render room type selector
- */
 function renderRoomTypes() {
     if (!roomTypeGrid) return;
     roomTypeGrid.innerHTML = '';
@@ -125,9 +126,6 @@ function renderRoomTypes() {
     });
 }
 
-/**
- * Render category tabs based on current room type
- */
 function renderCatTabs() {
     if (!catTabs) return;
     catTabs.innerHTML = '';
@@ -152,9 +150,6 @@ function renderCatTabs() {
     });
 }
 
-/**
- * Render furniture grid based on current category
- */
 function renderFurnGrid() {
     if (!furnGrid) return;
     furnGrid.innerHTML = '';
@@ -179,19 +174,17 @@ function renderFurnGrid() {
         el.addEventListener('click', () => {
             addFurnitureAndSelect(item.fn, currentColor, currentMatType);
             saveStateToHistory(getAllFurnitureData(), sceneRef);
+            updateItemCountDisplay();
         });
         furnGrid.appendChild(el);
     });
 }
 
-/**
- * Render material type tabs
- */
 function renderMatTypes() {
     if (!matTypesContainer) return;
     matTypesContainer.innerHTML = '';
     
-    ['fabric', 'leather', 'wood', 'metal'].forEach(t => {
+    ['fabric', 'leather', 'wood', 'metal', 'ceramic'].forEach(t => {
         const el = document.createElement('button');
         el.className = `mat-type ${currentMatType === t ? 'active' : ''}`;
         el.textContent = t.charAt(0).toUpperCase() + t.slice(1);
@@ -207,14 +200,11 @@ function renderMatTypes() {
     });
 }
 
-/**
- * Render color swatches for current material type
- */
 function renderColorSwatches() {
     if (!colorSwatches) return;
     colorSwatches.innerHTML = '';
     
-    const colors = matColors[currentMatType] || [];
+    const colors = matColors[currentMatType] || matColors.fabric;
     colors.forEach(c => {
         const el = document.createElement('div');
         el.className = `mat-swatch ${currentColor === c ? 'active' : ''}`;
@@ -231,15 +221,11 @@ function renderColorSwatches() {
     });
 }
 
-/**
- * Render wall color swatches
- */
 function renderWallColors() {
     if (!wallColorsContainer) return;
     wallColorsContainer.innerHTML = '';
     
-    const wallColorsList = getWallColorsList();
-    wallColorsList.forEach(wc => {
+    wallColorOptions.forEach(wc => {
         const el = document.createElement('div');
         el.className = `mat-swatch`;
         el.style.background = wc.color;
@@ -254,49 +240,36 @@ function renderWallColors() {
     });
 }
 
-/**
- * Update UI when an item is selected
- */
 function updateSelectionUI(item) {
     if (!item || !item.userData) {
-        itemPanel?.classList.add('hidden');
-        currentMatSpan.textContent = '—';
+        if (itemPanel) itemPanel.classList.add('hidden');
+        if (currentMatSpan) currentMatSpan.textContent = '—';
         return;
     }
     
-    itemPanel?.classList.remove('hidden');
+    if (itemPanel) itemPanel.classList.remove('hidden');
     if (selectedName) selectedName.textContent = item.userData.name || 'Item';
     if (selectedDesc) selectedDesc.textContent = item.userData.desc || '';
     if (currentMatSpan) currentMatSpan.textContent = `${item.userData.matType || 'fabric'} — ${item.userData.matColor || '#8A8478'}`;
     
-    // Update active material type tab
     const itemMatType = item.userData.matType || 'fabric';
     document.querySelectorAll('#mat-types .mat-type').forEach(el => {
         el.classList.toggle('active', el.textContent.toLowerCase() === itemMatType);
     });
     
-    // Update active color swatch
     const itemColor = item.userData.matColor || '#8A8478';
     document.querySelectorAll('#color-swatches .mat-swatch').forEach(el => {
         el.classList.toggle('active', el.title === itemColor);
     });
 }
 
-/**
- * Update room info display
- */
-function updateRoomInfo() {
-    const scene = getScene();
-    if (!scene) return;
-    
+function updateRoomInfoDisplay() {
     if (roomInfo) {
-        roomInfo.textContent = `Click to select · Drag to move · ${getPlacedItems().length} items placed`;
+        const count = getPlacedItems().length;
+        roomInfo.textContent = `Click to select · Drag to move · ${count} items placed`;
     }
 }
 
-/**
- * Update item count display
- */
 function updateItemCountDisplay() {
     if (itemCountSpan) {
         itemCountSpan.textContent = getPlacedItems().length;
@@ -307,9 +280,6 @@ function updateItemCountDisplay() {
 // Core Functions
 // ============================================================
 
-/**
- * Switch room type
- */
 function switchRoomType(typeId) {
     currentRoomType = typeId;
     setCurrentRoomType(typeId);
@@ -324,24 +294,17 @@ function switchRoomType(typeId) {
         if (whVal) whVal.textContent = rt.h.toFixed(1) + 'm';
         if (roomTitle) roomTitle.textContent = rt.label;
         
-        // Update active wall color swatch
         document.querySelectorAll('#wall-colors .mat-swatch').forEach(s => {
             s.classList.toggle('active', s.dataset.wc === rt.wallCol);
         });
+        
+        setWallColor(rt.wallCol, sceneRef);
+        updateRoomDimensions(rt.w, rt.d, rt.h);
     }
     
-    // Reset category to first available
     const cats = categoryMap[typeId] || [];
     currentCategory = cats.length > 0 ? cats[0].id : 'seating';
     setCurrentCategory(currentCategory);
-    
-    // Rebuild room in scene
-    if (sceneRef) {
-        // This will be handled by scene.js via event or direct call
-        window.dispatchEvent(new CustomEvent('roomChanged', { 
-            detail: { width: rt?.w || 8, depth: rt?.d || 6, height: rt?.h || 3 }
-        }));
-    }
     
     renderRoomTypes();
     renderCatTabs();
@@ -349,16 +312,13 @@ function switchRoomType(typeId) {
     
     clearAllFurniture();
     loadRoomPreset(typeId);
-    updateRoomInfo();
+    updateRoomInfoDisplay();
     updateItemCountDisplay();
     deselectAll();
     saveStateToHistory(getAllFurnitureData(), sceneRef);
     showToast(`Switched to ${rt?.label || typeId}`);
 }
 
-/**
- * Load room preset furniture
- */
 function loadRoomPreset(typeId) {
     const preset = roomPresets[typeId] || [];
     preset.forEach(p => {
@@ -367,9 +327,6 @@ function loadRoomPreset(typeId) {
     updateItemCountDisplay();
 }
 
-/**
- * Reset current room
- */
 function resetRoom() {
     const rt = roomTypes.find(r => r.id === currentRoomType);
     if (rt) {
@@ -385,22 +342,20 @@ function resetRoom() {
         });
         
         setWallColor(rt.wallCol, sceneRef);
+        updateRoomDimensions(rt.w, rt.d, rt.h);
     }
     
     clearAllFurniture();
     loadRoomPreset(currentRoomType);
-    updateRoomInfo();
+    updateRoomInfoDisplay();
     updateItemCountDisplay();
     deselectAll();
     saveStateToHistory(getAllFurnitureData(), sceneRef);
     showToast('Room reset with default furniture');
 }
 
-/**
- * Take screenshot
- */
 function takeScreenshot() {
-    if (!rendererRef) return;
+    if (!rendererRef || !sceneRef || !cameraRef) return;
     rendererRef.render(sceneRef, cameraRef);
     const link = document.createElement('a');
     link.download = `interior-${currentRoomType}-${Date.now()}.png`;
@@ -409,9 +364,6 @@ function takeScreenshot() {
     showToast('Screenshot saved');
 }
 
-/**
- * Save project to file
- */
 function saveProject() {
     const furnitureData = getAllFurnitureData();
     const roomData = {
@@ -423,22 +375,15 @@ function saveProject() {
     saveProjectToFile(furnitureData, roomData);
 }
 
-/**
- * Load project from file
- */
 function loadProject() {
-    loadFileInput?.click();
+    if (loadFileInput) loadFileInput.click();
 }
 
-/**
- * Handle file load
- */
 function handleFileLoad(event) {
     const file = event.target.files?.[0];
     if (!file) return;
     
     loadProjectFromFile(file, (furnitureData, roomData) => {
-        // Update room dimensions
         if (roomData) {
             if (roomWidthSlider) roomWidthSlider.value = roomData.width;
             if (roomDepthSlider) roomDepthSlider.value = roomData.depth;
@@ -450,11 +395,12 @@ function handleFileLoad(event) {
             if (roomData.type && roomData.type !== currentRoomType) {
                 switchRoomType(roomData.type);
             }
+            
+            updateRoomDimensions(roomData.width, roomData.depth, roomData.height);
         }
         
-        // Clear existing furniture and load new
         clearAllFurniture();
-        restoreFurnitureFromData(furnitureData, builders);
+        restoreFurnitureFromData(furnitureData, BuildersModule);
         updateItemCountDisplay();
         deselectAll();
         saveStateToHistory(getAllFurnitureData(), sceneRef);
@@ -462,9 +408,6 @@ function handleFileLoad(event) {
     });
 }
 
-/**
- * Export project as JSON
- */
 function exportProject() {
     const furnitureData = getAllFurnitureData();
     const roomData = {
@@ -476,9 +419,6 @@ function exportProject() {
     exportProjectToJSON(furnitureData, roomData);
 }
 
-/**
- * Toggle measure mode
- */
 function toggleMeasureMode() {
     measureMode = !measureMode;
     if (measureMode) {
@@ -494,50 +434,6 @@ function toggleMeasureMode() {
     }
 }
 
-/**
- * Add measure point
- */
-function addMeasurePoint(position) {
-    if (!measureMode) return;
-    
-    measurePoints.push(position.clone());
-    
-    // Visual feedback - add a temporary sphere
-    const sphereMat = new THREE.MeshStandardMaterial({ color: 0xff4444, emissive: 0x441111 });
-    const sphere = new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 8), sphereMat);
-    sphere.position.copy(position);
-    sceneRef?.add(sphere);
-    setTimeout(() => sceneRef?.remove(sphere), 500);
-    
-    if (measurePoints.length === 2) {
-        // Calculate distance
-        const p1 = measurePoints[0];
-        const p2 = measurePoints[1];
-        const distance = p1.distanceTo(p2);
-        
-        // Create line
-        if (measureLine && sceneRef) sceneRef.remove(measureLine);
-        const points = [p1, p2];
-        const geometry = new THREE.BufferGeometry().setFromPoints(points);
-        const material = new THREE.LineBasicMaterial({ color: 0xff4444, linewidth: 2 });
-        measureLine = new THREE.Line(geometry, material);
-        sceneRef?.add(measureLine);
-        
-        // Show measurement
-        if (measureValue) measureValue.textContent = distance.toFixed(2);
-        if (measureDisplay) measureDisplay.classList.remove('hidden');
-        showToast(`Distance: ${distance.toFixed(2)} meters`);
-        
-        // Auto exit measure mode after measurement
-        setTimeout(() => toggleMeasureMode(), 100);
-    } else {
-        showToast('Click second point to measure distance');
-    }
-}
-
-/**
- * Toggle dark mode
- */
 function toggleDarkMode() {
     document.body.classList.toggle('dark');
     const isDark = document.body.classList.contains('dark');
@@ -548,36 +444,30 @@ function toggleDarkMode() {
     showToast(isDark ? 'Dark mode ON' : 'Light mode ON');
 }
 
-/**
- * Handle undo
- */
 function handleUndo() {
     if (!canUndo()) {
         showToast('Nothing to undo');
         return;
     }
     const data = undo();
-    if (data) {
+    if (data && data.furniture) {
         clearAllFurniture();
-        restoreFurnitureFromData(data.furniture, builders);
+        restoreFurnitureFromData(data.furniture, BuildersModule);
         updateItemCountDisplay();
         deselectAll();
         showToast('Undo');
     }
 }
 
-/**
- * Handle redo
- */
 function handleRedo() {
     if (!canRedo()) {
         showToast('Nothing to redo');
         return;
     }
     const data = redo();
-    if (data) {
+    if (data && data.furniture) {
         clearAllFurniture();
-        restoreFurnitureFromData(data.furniture, builders);
+        restoreFurnitureFromData(data.furniture, BuildersModule);
         updateItemCountDisplay();
         deselectAll();
         showToast('Redo');
@@ -588,30 +478,27 @@ function handleRedo() {
 // Event Handlers Setup
 // ============================================================
 
-/**
- * Setup all event listeners
- */
 function setupEventListeners() {
-    // Room dimension sliders
     roomWidthSlider?.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
         if (rwVal) rwVal.textContent = val.toFixed(1) + 'm';
-        window.dispatchEvent(new CustomEvent('roomChanged', { detail: { width: val } }));
+        updateRoomDimensions(val, null, null);
+        updateRoomInfoDisplay();
     });
     
     roomDepthSlider?.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
         if (rdVal) rdVal.textContent = val.toFixed(1) + 'm';
-        window.dispatchEvent(new CustomEvent('roomChanged', { detail: { depth: val } }));
+        updateRoomDimensions(null, val, null);
+        updateRoomInfoDisplay();
     });
     
     wallHeightSlider?.addEventListener('input', (e) => {
         const val = parseFloat(e.target.value);
         if (whVal) whVal.textContent = val.toFixed(1) + 'm';
-        window.dispatchEvent(new CustomEvent('roomChanged', { detail: { height: val } }));
+        updateRoomDimensions(null, null, val);
     });
     
-    // Action buttons
     resetBtn?.addEventListener('click', resetRoom);
     presetBtn?.addEventListener('click', () => {
         clearAllFurniture();
@@ -629,7 +516,6 @@ function setupEventListeners() {
     });
     closePanelBtn?.addEventListener('click', deselectAll);
     
-    // Item manipulation
     rotLeftBtn?.addEventListener('click', () => {
         const selected = getSelectedItem();
         if (selected) selected.rotation.y += Math.PI / 12;
@@ -660,7 +546,6 @@ function setupEventListeners() {
         }
     });
     
-    // Quick actions
     undoBtn?.addEventListener('click', handleUndo);
     redoBtn?.addEventListener('click', handleRedo);
     saveBtn?.addEventListener('click', saveProject);
@@ -670,25 +555,24 @@ function setupEventListeners() {
     darkModeBtn?.addEventListener('click', toggleDarkMode);
     loadFileInput?.addEventListener('change', handleFileLoad);
     
-    // View controls
     topViewBtn?.addEventListener('click', () => {
-        if (controlsRef) {
-            controlsRef.target.set(0, 1, 0);
-            cameraRef?.position.set(0, 10, 0.01);
+        if (controlsRef && cameraRef) {
+            controlsRef.target.set(0, 1.5, 0);
+            cameraRef.position.set(0, 10, 0.01);
             controlsRef.update();
         }
     });
     frontViewBtn?.addEventListener('click', () => {
-        if (controlsRef) {
-            controlsRef.target.set(0, 1, 0);
-            cameraRef?.position.set(0, 2, 8);
+        if (controlsRef && cameraRef) {
+            controlsRef.target.set(0, 1.5, 0);
+            cameraRef.position.set(0, 2, 8);
             controlsRef.update();
         }
     });
     perspViewBtn?.addEventListener('click', () => {
-        if (controlsRef) {
-            controlsRef.target.set(0, 1, 0);
-            cameraRef?.position.set(7, 6, 9);
+        if (controlsRef && cameraRef) {
+            controlsRef.target.set(0, 1.5, 0);
+            cameraRef.position.set(7, 6, 9);
             controlsRef.update();
         }
     });
@@ -697,16 +581,13 @@ function setupEventListeners() {
         if (controlsRef) controlsRef.autoRotate = autoRotate;
         if (autoRotateBtn) {
             autoRotateBtn.style.color = autoRotate ? 'var(--accent)' : '';
-            autoRotateBtn.style.borderColor = autoRotate ? 'var(--accent)' : '';
         }
         showToast(autoRotate ? 'Auto-rotate ON' : 'Auto-rotate OFF');
     });
     wireframeBtn?.addEventListener('click', () => {
-        setWireframeMode(sceneRef);
-        const isWireframe = sceneRef?.userData?.wireframeMode || false;
+        const isWireframe = setWireframeMode(sceneRef);
         if (wireframeBtn) {
             wireframeBtn.style.color = isWireframe ? 'var(--accent2)' : '';
-            wireframeBtn.style.borderColor = isWireframe ? 'var(--accent2)' : '';
         }
         showToast(isWireframe ? 'Wireframe ON' : 'Wireframe OFF');
     });
@@ -715,7 +596,6 @@ function setupEventListeners() {
         showToast('Grid toggled');
     });
     
-    // Sidebar toggle
     toggleSidebarBtn?.addEventListener('click', () => {
         document.getElementById('sidebar')?.classList.toggle('collapsed');
         setTimeout(() => {
@@ -730,33 +610,28 @@ function setupEventListeners() {
         }, 400);
     });
     
-    // Lighting presets
     lightPresetBtns.forEach(btn => {
         btn.addEventListener('click', () => {
             lightPresetBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             const preset = btn.dataset.light;
-            updateLightingPreset(preset, sceneRef);
+            updateLightingPreset(preset);
             showToast(`${preset.charAt(0).toUpperCase() + preset.slice(1)} lighting`);
         });
     });
 }
 
 // ============================================================
-// Selection Listener (from controls.js)
+// Selection Listener
 // ============================================================
 
-/**
- * Listen for selection changes
- */
-function setupSelectionListener() {
-    // Override selectItem to update UI
-    const originalSelectItem = window.selectItemFn;
-    window.selectItemWithUI = (item) => {
-        updateSelectionUI(item);
-        if (originalSelectItem) originalSelectItem(item);
-    };
-}
+window.addEventListener('itemSelected', (e) => {
+    updateSelectionUI(e.detail.item);
+});
+
+window.addEventListener('itemDeselected', () => {
+    updateSelectionUI(null);
+});
 
 // ============================================================
 // Animation Loop
@@ -774,10 +649,9 @@ function animate() {
 // Initialization
 // ============================================================
 
-/**
- * Initialize the app
- */
 async function init() {
+    console.log('🚀 Initializing Interior Studio Pro...');
+    
     // Initialize scene
     const { scene, camera, renderer, controls } = await initScene();
     sceneRef = scene;
@@ -785,25 +659,11 @@ async function init() {
     rendererRef = renderer;
     controlsRef = controls;
     
-    // Set initial room dimensions from sliders
-    const initialWidth = parseFloat(roomWidthSlider?.value || 8);
-    const initialDepth = parseFloat(roomDepthSlider?.value || 6);
-    const initialHeight = parseFloat(wallHeightSlider?.value || 3);
+    console.log('✅ Scene initialized');
     
-    // Listen for room changes
-    window.addEventListener('roomChanged', (e) => {
-        const { width, depth, height } = e.detail;
-        if (width !== undefined) {
-            if (rwVal) rwVal.textContent = width.toFixed(1) + 'm';
-        }
-        if (depth !== undefined) {
-            if (rdVal) rdVal.textContent = depth.toFixed(1) + 'm';
-        }
-        if (height !== undefined) {
-            if (whVal) whVal.textContent = height.toFixed(1) + 'm';
-        }
-        updateRoomInfo();
-    });
+    // Initialize controls with references
+    const canvas = document.getElementById('viewer-canvas');
+    initControls(canvas, camera, scene, controls);
     
     // Render UI
     renderRoomTypes();
@@ -816,10 +676,13 @@ async function init() {
     // Load default room preset
     loadRoomPreset('living');
     updateItemCountDisplay();
+    updateRoomInfoDisplay();
     
     // Setup event listeners
     setupEventListeners();
-    setupSelectionListener();
+    
+    // Setup undo/redo shortcuts
+    setupUndoRedoShortcuts(handleUndo, handleRedo);
     
     // Load dark mode preference
     const savedDarkMode = localStorage.getItem('darkMode');
@@ -828,13 +691,13 @@ async function init() {
         if (darkModeBtn) darkModeBtn.innerHTML = '<i class="fas fa-sun"></i>';
     }
     
-    // Export functions to window for debugging
-    window.debug = {
-        getPlacedItems,
-        getScene: () => sceneRef,
-        clearAll: clearAllFurniture,
-        saveState: () => saveStateToHistory(getAllFurnitureData(), sceneRef)
-    };
+    // Check for autosave
+    if (hasAutosave()) {
+        const autosave = loadAutosave();
+        if (autosave && autosave.furniture && autosave.furniture.length > 0) {
+            showToast('Auto-save found! Load it from the Load button.', 'info');
+        }
+    }
     
     // Hide loading screen
     setTimeout(() => {
@@ -842,7 +705,7 @@ async function init() {
         setTimeout(() => {
             if (loadingScreen) loadingScreen.style.display = 'none';
         }, 500);
-    }, 800);
+    }, 1000);
     
     // Start animation
     animate();
@@ -853,6 +716,3 @@ async function init() {
 
 // Start the app
 init();
-
-// Export for other modules
-export { addMeasurePoint, updateItemCountDisplay };
