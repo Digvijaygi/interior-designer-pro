@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Interior Studio Pro — 3D Interior Designer</title>
+    
+    <!-- SEO Meta -->
+    <meta name="description" content="Professional 3D interior design tool. Drag & drop furniture, customize materials, save layouts.">
+    <meta name="author" content="Interior Studio Pro">
+    
+    <!-- Tailwind + Fonts -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@200;300;400;500;600;700;800;900&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Three.js Import Map -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="style.css">
+    
+    <style>
+        /* Additional inline styles for critical loading */
+        #loading-screen {
+            position: fixed;
+            inset: 0;
+            background: #F5F0E8;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            transition: opacity 0.5s ease;
+            font-family: 'Outfit', sans-serif;
+        }
+        #loading-screen.hide {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .loader-spinner {
+            width: 48px;
+            height: 48px;
+            border: 3px solid #E2DDD4;
+            border-top-color: #C17F4E;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading-screen">
+        <div class="text-center">
+            <div class="loader-spinner mx-auto mb-4"></div>
+            <p class="text-sm font-medium" style="color: #2D2D2D;">Loading 3D Studio...</p>
+            <p class="text-xs mt-1" style="color: #8A8478;">Preparing your design space</p>
+        </div>
+    </div>
+
+    <!-- Main App Container -->
+    <div class="flex h-screen">
+        <!-- Sidebar -->
+        <aside class="sidebar" id="sidebar">
+            <div class="p-5 border-b" style="border-color:var(--border)">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-lg flex items-center justify-center" style="background:var(--accent)">
+                        <i class="fas fa-couch text-white text-xs"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-base font-bold leading-tight">Interior Studio Pro</h1>
+                        <p class="text-[10px]" style="color:var(--muted)">Multi-Room 3D Designer</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Actions Toolbar -->
+            <div class="p-3 border-b" style="border-color:var(--border)">
+                <div class="flex gap-2 justify-between">
+                    <button class="quick-action" id="undo-btn" title="Undo (Ctrl+Z)"><i class="fas fa-undo-alt"></i></button>
+                    <button class="quick-action" id="redo-btn" title="Redo (Ctrl+Y)"><i class="fas fa-redo-alt"></i></button>
+                    <button class="quick-action" id="save-btn" title="Save Project"><i class="fas fa-save"></i></button>
+                    <button class="quick-action" id="load-btn" title="Load Project"><i class="fas fa-folder-open"></i></button>
+                    <button class="quick-action" id="export-btn" title="Export JSON"><i class="fas fa-download"></i></button>
+                    <button class="quick-action" id="measure-btn" title="Measure Tool (M)"><i class="fas fa-ruler-combined"></i></button>
+                    <button class="quick-action" id="darkmode-btn" title="Dark Mode"><i class="fas fa-moon"></i></button>
+                </div>
+                <input type="file" id="load-file-input" accept=".json" style="display:none">
+            </div>
+
+            <!-- Room Type Selector -->
+            <div class="p-4 border-b" style="border-color:var(--border)">
+                <p class="section-label">🏠 Room Type</p>
+                <div class="grid grid-cols-3 gap-1.5" id="room-type-grid"></div>
+            </div>
+
+            <!-- Lighting Presets -->
+            <div class="p-4 border-b" style="border-color:var(--border)">
+                <p class="section-label">💡 Lighting Presets</p>
+                <div class="flex gap-2">
+                    <button class="light-preset active" data-light="day">☀️ Day</button>
+                    <button class="light-preset" data-light="evening">🌅 Evening</button>
+                    <button class="light-preset" data-light="night">🌙 Night</button>
+                </div>
+            </div>
+
+            <!-- Furniture Library -->
+            <div class="p-4 border-b" style="border-color:var(--border)">
+                <p class="section-label">📦 Furniture Library</p>
+                <div class="flex gap-1.5 mb-3 overflow-x-auto pb-1 flex-wrap" id="cat-tabs"></div>
+                <div class="grid grid-cols-2 gap-2" id="furn-grid"></div>
+            </div>
+
+            <!-- Material Selection -->
+            <div class="p-4 border-b" style="border-color:var(--border)">
+                <p class="section-label">🎨 Material & Color</p>
+                <p class="text-[11px] mb-2" style="color:var(--muted)">Select a placed item, then pick a material</p>
+                <div class="flex gap-1.5 mb-3 flex-wrap" id="mat-types"></div>
+                <div class="flex flex-wrap gap-2" id="color-swatches"></div>
+                <div class="flex items-center gap-2 mt-2">
+                    <span class="text-[10px]" style="color:var(--muted)">Applied:</span>
+                    <span class="text-[11px] font-semibold" id="current-mat" style="color:var(--accent)">—</span>
+                </div>
+            </div>
+
+            <!-- Room Settings -->
+            <div class="p-4 border-b" style="border-color:var(--border)">
+                <p class="section-label">📐 Room Dimensions</p>
+                <div class="mb-3">
+                    <div class="flex justify-between mb-1"><span class="text-[11px] font-medium">Width</span><span class="text-[10px]" style="color:var(--muted)" id="rw-val">8.0m</span></div>
+                    <input type="range" id="room-width" min="3" max="16" value="8" step="0.5">
+                </div>
+                <div class="mb-3">
+                    <div class="flex justify-between mb-1"><span class="text-[11px] font-medium">Depth</span><span class="text-[10px]" style="color:var(--muted)" id="rd-val">6.0m</span></div>
+                    <input type="range" id="room-depth" min="3" max="14" value="6" step="0.5">
+                </div>
+                <div class="mb-3">
+                    <div class="flex justify-between mb-1"><span class="text-[11px] font-medium">Ceiling Height</span><span class="text-[10px]" style="color:var(--muted)" id="wh-val">3.0m</span></div>
+                    <input type="range" id="wall-height" min="2.4" max="5" value="3" step="0.25">
+                </div>
+                <div>
+                    <span class="text-[11px] font-medium">Wall Color</span>
+                    <div class="flex gap-2 mt-2 flex-wrap" id="wall-colors"></div>
+                </div>
+            </div>
+
+            <!-- Actions -->
+            <div class="p-4">
+                <p class="section-label">⚡ Actions</p>
+                <div class="flex flex-col gap-2">
+                    <button class="action-btn primary" id="btn-reset"><i class="fas fa-undo text-xs"></i>Reset Room</button>
+                    <button class="action-btn secondary" id="btn-preset"><i class="fas fa-magic text-xs"></i>Load Room Preset</button>
+                    <button class="action-btn" style="background:var(--ivory);color:var(--fg);border:1px solid var(--border)" id="btn-screenshot"><i class="fas fa-camera text-xs"></i>Screenshot</button>
+                    <button class="action-btn danger" id="btn-delete"><i class="fas fa-trash-alt text-xs"></i>Delete Selected</button>
+                </div>
+            </div>
+            
+            <!-- Stats -->
+            <div class="p-4 border-t" style="border-color:var(--border)">
+                <p class="text-[9px] text-center" style="color:var(--muted)">
+                    <i class="fas fa-cube"></i> <span id="item-count">0</span> items | 
+                    <i class="fas fa-ruler"></i> Drag to move | 
+                    <i class="fas fa-mouse-pointer"></i> Click to select
+                </p>
+            </div>
+        </aside>
+
+        <!-- Main Viewer -->
+        <main class="flex-1 relative" style="background:var(--ivory)">
+            <button class="ctrl-btn absolute top-4 left-4 z-20" id="toggle-sidebar" title="Toggle Sidebar">
+                <i class="fas fa-bars"></i>
+            </button>
+            
+            <!-- Info overlay -->
+            <div class="absolute top-4 left-16 z-10 bg-white/90 backdrop-blur-md rounded-xl px-4 py-3 border" style="border-color:var(--border)">
+                <h3 class="text-sm font-bold" id="room-title">Living Room</h3>
+                <p class="text-[11px] mt-0.5" style="color:var(--muted)" id="room-info">8.0m × 6.0m — Click item to select · Drag to move</p>
+            </div>
+            
+            <!-- Measurement display -->
+            <div class="absolute top-20 left-16 z-10 bg-black/70 text-white px-3 py-1.5 rounded-lg text-xs font-mono hidden" id="measure-display">
+                Distance: <span id="measure-value">0.00</span> m
+            </div>
+            
+            <canvas id="viewer-canvas"></canvas>
+            
+            <!-- View controls -->
+            <div class="absolute bottom-5 right-5 flex gap-2 z-10 flex-wrap">
+                <button class="ctrl-btn" id="btn-top" title="Top View"><i class="fas fa-border-all"></i></button>
+                <button class="ctrl-btn" id="btn-front" title="Front View"><i class="fas fa-square"></i></button>
+                <button class="ctrl-btn" id="btn-persp" title="Perspective"><i class="fas fa-cube"></i></button>
+                <button class="ctrl-btn" id="btn-autorot" title="Auto Rotate"><i class="fas fa-sync-alt"></i></button>
+                <button class="ctrl-btn" id="btn-wireframe" title="Wireframe"><i class="fas fa-border-style"></i></button>
+                <button class="ctrl-btn" id="btn-grid" title="Toggle Grid"><i class="fas fa-th"></i></button>
+            </div>
+            
+            <!-- Selected item panel -->
+            <div class="absolute bottom-5 left-5 z-10 bg-white/92 backdrop-blur-md rounded-xl p-4 border hidden" style="border-color:var(--border);min-width:220px" id="item-panel">
+                <div class="flex items-center justify-between mb-1">
+                    <h4 class="text-sm font-bold" id="sel-name">—</h4>
+                    <button class="text-xs cursor-pointer hover:text-red-500 transition-colors" style="color:var(--muted)" id="close-panel"><i class="fas fa-times"></i></button>
+                </div>
+                <p class="text-[11px]" style="color:var(--muted)" id="sel-desc">—</p>
+                <div class="flex gap-2 mt-3">
+                    <button class="ctrl-btn" style="width:30px;height:30px;font-size:11px" id="rot-l" title="Rotate Left 15°"><i class="fas fa-undo-alt"></i></button>
+                    <button class="ctrl-btn" style="width:30px;height:30px;font-size:11px" id="rot-r" title="Rotate Right 15°"><i class="fas fa-redo-alt"></i></button>
+                    <button class="ctrl-btn" style="width:30px;height:30px;font-size:11px" id="dup-item" title="Duplicate"><i class="fas fa-clone"></i></button>
+                    <button class="ctrl-btn" style="width:30px;height:30px;font-size:11px" id="raise-item" title="Raise"><i class="fas fa-arrow-up"></i></button>
+                    <button class="ctrl-btn" style="width:30px;height:30px;font-size:11px" id="lower-item" title="Lower"><i class="fas fa-arrow-down"></i></button>
+                </div>
+            </div>
+        </main>
+    </div>
+    
+    <div class="toast" id="toast"></div>
+
+    <!-- External Modules -->
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>

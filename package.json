@@ -1,0 +1,68 @@
+{
+  "name": "interior-studio-pro",
+  "version": "1.0.0",
+  "description": "Professional 3D Interior Design Application - Drag & drop furniture, customize materials, save layouts",
+  "main": "index.html",
+  "type": "module",
+  "scripts": {
+    "start": "npx serve . -p 3000",
+    "dev": "npx serve . -p 3000 --watch",
+    "build": "echo 'No build step required - static site'",
+    "preview": "npx serve . -p 3000",
+    "deploy": "vercel --prod",
+    "deploy:preview": "vercel",
+    "lint": "eslint js/*.js",
+    "format": "prettier --write \"**/*.{js,html,css,json,md}\""
+  },
+  "keywords": [
+    "3d",
+    "interior-design",
+    "threejs",
+    "furniture",
+    "room-designer",
+    "home-design",
+    "3d-modeling",
+    "visualization",
+    "drag-drop",
+    "real-time"
+  ],
+  "author": {
+    "name": "Interior Studio Pro",
+    "email": "contact@interiorstudio.pro",
+    "url": "https://interior-studio-pro.vercel.app"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/interior-studio-pro"
+  },
+  "bugs": {
+    "url": "https://github.com/yourusername/interior-studio-pro/issues"
+  },
+  "homepage": "https://interior-studio-pro.vercel.app",
+  "devDependencies": {
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.1",
+    "serve": "^14.2.1"
+  },
+  "dependencies": {
+    "three": "^0.160.0"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=9.0.0"
+  },
+  "browserslist": [
+    "last 2 versions",
+    "not dead",
+    "not ie 11"
+  ],
+  "private": false,
+  "files": [
+    "*.html",
+    "*.css",
+    "js/**",
+    "assets/**",
+    "vercel.json"
+  ]
+}
